@@ -1,0 +1,365 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, 
+  ResponsiveContainer, LineChart, Line, ComposedChart, ReferenceLine, Legend
+} from 'recharts';
+import { 
+  Sun, Euro, Zap, TrendingDown, AlertCircle, ArrowUpRight, 
+  Smartphone, RefreshCw, Clock, ShieldCheck, Info, Leaf, 
+  ChevronLeft, ChevronRight, Link2, Mail, Lock, Home, 
+  Activity, Layers, Settings, Save, Eye, EyeOff, Database
+} from 'lucide-react';
+
+// Firebase Imports
+import { initializeApp } from 'firebase/app';
+import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+
+// Firebase Config
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'solar-intel-vault';
+
+const App = () => {
+  const [user, setUser] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [activeTab, setActiveTab] = useState('dag');
+  const [loading, setLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState(null);
+  const [showKeys, setShowKeys] = useState(false);
+
+  // State voor API instellingen (Echte opslag)
+  const [config, setConfig] = useState({
+    zonneplanEmail: '',
+    huaweiUser: '',
+    huaweiSystemCode: '',
+    enphaseApiKey: '',
+    enphaseUserId: '',
+    solarEdgeKey: '',
+    solarEdgeId: ''
+  });
+
+  // Live states (In een echte setup gevoed door de opgeslagen keys)
+  const [liveStats] = useState({
+    huawei: 2450,
+    enphase: 1750,
+    house: 1850,
+    gas: 0.12,
+    price: 0.245
+  });
+
+  // 1. Auth Init
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Auth error:", err);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Data Fetching (Settings uit Firestore)
+  useEffect(() => {
+    if (!user) return;
+    const configDoc = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'api_config');
+    const unsubscribe = onSnapshot(configDoc, (docSnap) => {
+      if (docSnap.exists()) {
+        setConfig(docSnap.data());
+      }
+      setLoading(false);
+    }, (error) => {
+      console.error("Firestore error:", error);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const saveSettings = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const configDoc = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'api_config');
+      await setDoc(configDoc, config);
+      setSaveStatus('success');
+      setTimeout(() => {
+        setSaveStatus(null);
+        setShowSettings(false);
+      }, 2000);
+    } catch (err) {
+      setSaveStatus('error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const chartData = useMemo(() => {
+    let length = activeTab === 'dag' ? 24 : activeTab === 'week' ? 7 : 30;
+    return Array.from({ length }, (_, i) => {
+      const isDay = i >= 8 && i <= 19;
+      const intensity = isDay ? Math.sin((i - 8) / 11 * Math.PI) : 0;
+      const h = isDay ? Math.round(intensity * 2500 + Math.random() * 200) : 0;
+      const e = isDay ? Math.round(intensity * 1800 + Math.random() * 150) : 0;
+      return {
+        time: activeTab === 'dag' ? `${i}:00` : `Dag ${i+1}`,
+        huawei: h,
+        enphase: e,
+        consumption: Math.round(Math.random() * 1500 + 400),
+        net: (h + e) - 1000
+      };
+    });
+  }, [activeTab]);
+
+  const totalSolar = liveStats.huawei + liveStats.enphase;
+  const netLive = totalSolar - liveStats.house;
+
+  if (!user) return <div className="min-h-screen bg-black flex items-center justify-center text-blue-500"><RefreshCw className="animate-spin" /></div>;
+
+  return (
+    <div className="min-h-screen bg-[#020206] text-slate-100 font-sans pb-24 selection:bg-blue-500/30">
+      {/* Top Navigation Bar */}
+      <nav className="bg-slate-900/40 border-b border-white/5 py-3 px-6 flex justify-between items-center backdrop-blur-xl sticky top-0 z-50">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Cloud Sync Active</span>
+          </div>
+        </div>
+        <button 
+          onClick={() => setShowSettings(!showSettings)}
+          className={`flex items-center gap-2 px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${showSettings ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'bg-slate-800 text-slate-300 border border-slate-700'}`}
+        >
+          <Settings size={14} /> {showSettings ? 'Sluit Instellingen' : 'API Configuratie'}
+        </button>
+      </nav>
+
+      <main className="max-w-7xl mx-auto p-4 md:p-10">
+        
+        {showSettings ? (
+          <div className="max-w-2xl mx-auto py-10 animate-in fade-in slide-in-from-bottom-4">
+            <div className="bg-[#0a0a0c] border border-slate-800 p-10 rounded-[3rem] shadow-2xl">
+              <h2 className="text-3xl font-black mb-4 tracking-tighter flex items-center gap-3">
+                <div className="bg-blue-600 p-2 rounded-xl"><Lock size={20} /></div>
+                The Vault
+              </h2>
+              <p className="text-slate-500 text-sm mb-10 leading-relaxed">
+                Je gegevens worden versleuteld opgeslagen in je persoonlijke cloud-omgeving. Alleen jij hebt toegang tot deze configuratie.
+              </p>
+              
+              <div className="space-y-8">
+                {/* Zonneplan Section */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-blue-400">
+                    <Link2 size={16} />
+                    <label className="text-[11px] font-black uppercase tracking-[0.15em]">Zonneplan (P1 & Tarieven)</label>
+                  </div>
+                  <input 
+                    type="email" 
+                    placeholder="Geregistreerd e-mailadres" 
+                    className="w-full bg-black border border-slate-800 p-5 rounded-2xl text-sm focus:border-blue-500 outline-none transition-all"
+                    value={config.zonneplanEmail}
+                    onChange={(e) => setConfig({...config, zonneplanEmail: e.target.value})}
+                  />
+                </div>
+
+                {/* Huawei Section */}
+                <div className="space-y-4 pt-6 border-t border-slate-800/50">
+                  <div className="flex items-center gap-2 text-blue-400">
+                    <Sun size={16} />
+                    <label className="text-[11px] font-black uppercase tracking-[0.15em]">Huawei FusionSolar</label>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <input 
+                      type="text" placeholder="Northbound User Name" 
+                      className="bg-black border border-slate-800 p-5 rounded-2xl text-sm focus:border-blue-500 outline-none"
+                      value={config.huaweiUser}
+                      onChange={(e) => setConfig({...config, huaweiUser: e.target.value})}
+                    />
+                    <input 
+                      type={showKeys ? "text" : "password"} placeholder="System Code" 
+                      className="bg-black border border-slate-800 p-5 rounded-2xl text-sm focus:border-blue-500 outline-none"
+                      value={config.huaweiSystemCode}
+                      onChange={(e) => setConfig({...config, huaweiSystemCode: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                {/* Enphase Section */}
+                <div className="space-y-4 pt-6 border-t border-slate-800/50">
+                  <div className="flex items-center gap-2 text-indigo-400">
+                    <Layers size={16} />
+                    <label className="text-[11px] font-black uppercase tracking-[0.15em]">Enphase / SolarEdge</label>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <input 
+                      type={showKeys ? "text" : "password"} placeholder="API Key" 
+                      className="bg-black border border-slate-800 p-5 rounded-2xl text-sm focus:border-indigo-500 outline-none"
+                      value={config.enphaseApiKey}
+                      onChange={(e) => setConfig({...config, enphaseApiKey: e.target.value})}
+                    />
+                    <input 
+                      type="text" placeholder="System/User ID" 
+                      className="bg-black border border-slate-800 p-5 rounded-2xl text-sm focus:border-indigo-500 outline-none"
+                      value={config.enphaseUserId}
+                      onChange={(e) => setConfig({...config, enphaseUserId: e.target.value})}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-12 flex items-center gap-4">
+                <button 
+                  onClick={saveSettings}
+                  disabled={loading}
+                  className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 py-5 rounded-[1.5rem] font-black text-xs uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl shadow-blue-900/20"
+                >
+                  {loading ? <RefreshCw className="animate-spin" /> : <Save size={18} />}
+                  Bevestig & Synchroniseer
+                </button>
+                <button 
+                  onClick={() => setShowKeys(!showKeys)}
+                  className="p-5 bg-slate-900 border border-slate-800 rounded-[1.5rem] text-slate-400 hover:text-white transition-colors"
+                >
+                  {showKeys ? <EyeOff size={22} /> : <Eye size={22} />}
+                </button>
+              </div>
+
+              {saveStatus === 'success' && <p className="text-emerald-400 text-[10px] font-black uppercase text-center mt-6 tracking-widest animate-pulse">Data veilig weggeschreven</p>}
+            </div>
+          </div>
+        ) : (
+          <div className="animate-in fade-in duration-700">
+            {/* Header Section */}
+            <header className="flex flex-col lg:flex-row justify-between items-end mb-12 gap-8">
+              <div>
+                <h1 className="text-5xl font-black tracking-tighter italic mb-4">
+                  ENERGY<span className="text-blue-500 underline decoration-blue-500/20 underline-offset-8">CORE</span>
+                </h1>
+                <div className="flex flex-wrap gap-5">
+                  <div className="flex items-center gap-2 bg-blue-500/5 px-3 py-1 rounded-full border border-blue-500/10">
+                    <div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_blue]"></div>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Huawei Fusion</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-indigo-500/5 px-3 py-1 rounded-full border border-indigo-500/10">
+                    <div className="w-2 h-2 rounded-full bg-indigo-500 shadow-[0_0_8px_indigo]"></div>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Enphase System</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-emerald-500/5 px-3 py-1 rounded-full border border-emerald-500/10">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_emerald]"></div>
+                    <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Zonneplan P1</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex bg-slate-900/50 p-1.5 rounded-2xl border border-white/5 shadow-2xl">
+                {['dag', 'week', 'maand'].map((t) => (
+                  <button 
+                    key={t} 
+                    onClick={() => setActiveTab(t)} 
+                    className={`px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === t ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'text-slate-500 hover:text-slate-300'}`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </header>
+
+            {/* Top Stats Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+              <div className="bg-[#0a0a0c] border border-white/5 p-8 rounded-[2.5rem] relative group hover:border-blue-500/30 transition-all overflow-hidden">
+                <Sun className="absolute -right-4 -top-4 text-blue-500/5 group-hover:text-blue-500/10 transition-colors" size={120} />
+                <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-3">Live Opbrengst</p>
+                <div className="text-4xl font-black text-white flex items-baseline gap-2">
+                  {totalSolar} <span className="text-sm text-slate-600 italic uppercase">Watt</span>
+                </div>
+                <div className="mt-6 flex justify-between items-center text-[10px] font-black border-t border-white/5 pt-4">
+                  <span className="text-blue-400">HUAWEI: {liveStats.huawei}W</span>
+                  <span className="text-indigo-400">ENPH: {liveStats.enphase}W</span>
+                </div>
+              </div>
+              
+              <div className="bg-[#0a0a0c] border border-white/5 p-8 rounded-[2.5rem] relative group">
+                <Home className="absolute -right-4 -top-4 text-slate-500/5" size={120} />
+                <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-3">Huis Verbruik</p>
+                <div className="text-4xl font-black text-white flex items-baseline gap-2">
+                  {liveStats.house} <span className="text-sm text-slate-600 italic uppercase">Watt</span>
+                </div>
+                <div className="mt-6 flex items-center gap-2">
+                   <div className="h-1 w-full bg-slate-800 rounded-full overflow-hidden">
+                     <div className="bg-slate-400 h-full" style={{width: '35%'}}></div>
+                   </div>
+                   <span className="text-[10px] font-black text-slate-600 italic">P1</span>
+                </div>
+              </div>
+
+              <div className={`p-8 rounded-[2.5rem] border relative overflow-hidden transition-all duration-700 ${netLive > 0 ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
+                 <Activity className={`absolute -right-4 -top-4 ${netLive > 0 ? 'text-emerald-500/5' : 'text-red-500/5'}`} size={120} />
+                 <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-3">Systeem Balans</p>
+                 <div className={`text-4xl font-black flex items-baseline gap-2 ${netLive > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                   {netLive > 0 ? '+' : ''}{netLive} <span className="text-sm opacity-30 italic uppercase font-medium">W</span>
+                 </div>
+                 <div className="mt-6 flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${netLive > 0 ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`}></div>
+                    <span className="text-[10px] font-black uppercase tracking-tighter opacity-50">{netLive > 0 ? 'Injecteren in Net' : 'Afname van Net'}</span>
+                 </div>
+              </div>
+
+              <div className="bg-[#0a0a0c] border border-white/5 p-8 rounded-[2.5rem] relative group">
+                 <Euro className="absolute -right-4 -top-4 text-blue-500/5" size={120} />
+                 <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-3">Zonneplan Prijs</p>
+                 <div className="text-4xl font-black text-white">€{liveStats.price.toFixed(3)}</div>
+                 <div className="mt-6 flex items-center gap-2 text-blue-400">
+                   <TrendingDown size={14} />
+                   <span className="text-[10px] font-black uppercase tracking-widest italic">Dynamisch Voordeel</span>
+                 </div>
+              </div>
+            </div>
+
+            {/* Charts & Analytics Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Main Chart */}
+              <div className="lg:col-span-2 bg-[#0a0a0c]/50 border border-white/5 p-10 rounded-[3.5rem] shadow-2xl backdrop-blur-sm">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-4">
+                  <h3 className="font-black uppercase tracking-[0.2em] text-[11px] flex items-center gap-3 text-white">
+                    <Layers size={18} className="text-blue-500" /> Prestatie Analyse
+                  </h3>
+                  <div className="flex flex-wrap gap-6 text-[9px] font-black uppercase tracking-[0.2em]">
+                    <span className="flex items-center gap-2 text-blue-500"><div className="w-3 h-3 rounded-sm bg-blue-500"></div> HUAWEI</span>
+                    <span className="flex items-center gap-2 text-indigo-400"><div className="w-3 h-3 rounded-sm bg-indigo-400"></div> ENPHASE</span>
+                    <span className="flex items-center gap-2 text-slate-600"><div className="w-3 h-0.5 bg-slate-600 border border-dashed border-slate-600"></div> VERBRUIK</span>
+                  </div>
+                </div>
+                
+                <div className="h-96 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData}>
+                      <defs>
+                        <linearGradient id="gradHuawei" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="gradEnphase" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#818cf8" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#818cf8" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" opacity={0.2} />
+                      <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 10, fontWeight: 'bold'}} />
+                      <YAxis axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 10, fontWeight: 'bold'}} />
+                      <Tooltip 
+                        contentStyle={{backgroundColor: '#0a0a0c', border: '1px solid #1e293b', borderRadius: '20px', padding: '15px'}}
+                        itemStyle={{fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase'}}
+                      />
+                      <Area stackId="1" type="monotone" dataKey="huawei" stroke="#3b82f6" fillOpacity={1} fill="url(#gradHuawei)" strokeWidth={3} />
+                      <Area stackId="1" type="monotone" dataKey="enphase" stroke="#818cf8"
