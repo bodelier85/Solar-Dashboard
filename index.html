@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EnergyCore OS | Live Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #020205; color: white; margin: 0; overflow-x: hidden; }
+        .glass { background: rgba(10, 10, 12, 0.8); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.05); }
+        .btn-glow:hover { box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // ==========================================
+        // 1. VUL HIER JE GEGEVENS IN
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "HIER_JE_API_KEY",
+            authDomain: "HIER_JE_PROJECT_ID.firebaseapp.com",
+            projectId: "HIER_JE_PROJECT_ID",
+            storageBucket: "HIER_JE_PROJECT_ID.appspot.com",
+            messagingSenderId: "HIER_SENDER_ID",
+            appId: "HIER_APP_ID"
+        };
+
+        // Jouw specifieke Cloudflare Worker URL
+        const CLOUDFLARE_PROXY = "https://solar-bridge.bodelier.workers.dev/?url=";
+        const APP_ID = "energy-core-v1";
+
+        // Initialisatie
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        const { useState, useEffect } = React;
+        const { Settings, Mail, CheckCircle2, Zap, Home, Sun, RefreshCw, AlertCircle } = lucide;
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [showSettings, setShowSettings] = useState(false);
+            const [loading, setLoading] = useState(true);
+            const [config, setConfig] = useState({ zonneplanEmail: '', zonneplanToken: '' });
+            const [liveData, setLiveData] = useState({ p1: 0, isLive: false, lastUpdate: null });
+
+            // Auth & Firestore Sync
+            useEffect(() => {
+                signInAnonymously(auth).catch(err => console.error("Firebase Auth Error:", err));
+                return onAuthStateChanged(auth, (u) => {
+                    if (u) {
+                        setUser(u);
+                        const ref = doc(db, 'artifacts', APP_ID, 'users', u.uid, 'settings', 'config');
+                        onSnapshot(ref, (docSnap) => {
+                            if (docSnap.exists()) setConfig(docSnap.data());
+                            setLoading(false);
+                        });
+                    }
+                });
+            }, []);
+
+            // Data ophalen van Zonneplan
+            useEffect(() => {
+                if (config.zonneplanToken && user) {
+                    const fetchP1 = async () => {
+                        try {
+                            const target = "https://api.zonneplan.nl/client-api/v2/zi-p1-measurements";
+                            const res = await fetch(CLOUDFLARE_PROXY + encodeURIComponent(target), {
+                                headers: { "Authorization": `Bearer ${config.zonneplanToken}` }
+                            });
+                            const data = await res.json();
+                            if (data.p1_measurement) {
+                                setLiveData({ 
+                                    p1: data.p1_measurement.electricity_consumption_watt,
+                                    isLive: true,
+                                    lastUpdate: new Date().toLocaleTimeString()
+                                });
+                            }
+                        } catch (e) { console.error("Proxy/API Error:", e); }
+                    };
+                    fetchP1();
+                    const inv = setInterval(fetchP1, 10000); // Elke 10 seconden
+                    return () => clearInterval(inv);
+                }
+            }, [config.zonneplanToken, user]);
+
+            const handleZonneplanLink = async () => {
+                if (!config.zonneplanEmail) return alert("Vul eerst je e-mailadres in.");
+                try {
+                    const target = "https://api.zonneplan.nl/client-api/v2/auth/request-link";
+                    await fetch(CLOUDFLARE_PROXY + encodeURIComponent(target), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: config.zonneplanEmail })
+                    });
+                    alert("Login link verzonden! Check de mail van Zonneplan.");
+                } catch (e) { alert("Fout bij verzenden link."); }
+            };
+
+            if (loading) return React.createElement('div', { className: "flex h-screen items-center justify-center bg-black text-blue-500" }, [
+                React.createElement(RefreshCw, { className: "animate-spin mr-2" }), "Initialiseren..."
+            ]);
+
+            return React.createElement('div', { className: "min-h-screen p-6 md:p-12 max-w-5xl mx-auto" }, [
+                // Header
+                React.createElement('nav', { className: "flex justify-between items-center mb-16" }, [
+                    React.createElement('h1', { className: "text-3xl font-black italic tracking-tighter" }, [
+                        "ENERGY", React.createElement('span', { className: "text-blue-600" }, "CORE")
+                    ]),
+                    React.createElement('button', { 
+                        onClick: () => setShowSettings(!showSettings),
+                        className: `p-4 rounded-2xl glass transition-all ${showSettings ? 'text-blue-500 border-blue-500/50' : 'text-white'}`
+                    }, React.createElement(Settings, { size: 24 }))
+                ]),
+
+                showSettings ? 
+                    // Settings View
+                    React.createElement('div', { className: "max-w-md mx-auto glass p-10 rounded-[3rem] shadow-2xl animate-in fade-in" }, [
+                        React.createElement('h2', { className: "text-2xl font-black mb-8 flex items-center gap-3 italic text-blue-500" }, "INSTELLINGEN"),
+                        React.createElement('div', { className: "space-y-6" }, [
+                            React.createElement('div', { className: "space-y-2" }, [
+                                React.createElement('label', { className: "text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-2" }, "Zonneplan E-mail"),
+                                React.createElement('input', {
+                                    className: "w-full bg-black border border-white/10 p-5 rounded-2xl outline-none focus:border-blue-600 transition-all text-sm",
+                                    placeholder: "voorbeeld@mail.com",
+                                    value: config.zonneplanEmail,
+                                    onChange: (e) => setConfig({...config, zonneplanEmail: e.target.value})
+                                })
+                            ]),
+                            React.createElement('button', {
+                                onClick: handleZonneplanLink,
+                                className: "w-full bg-blue-600 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] btn-glow transition-all"
+                            }, "Verstuur Login Link"),
+                            config.zonneplanToken ? 
+                                React.createElement('div', { className: "flex items-center gap-2 text-emerald-500 justify-center text-xs font-bold bg-emerald-500/10 p-4 rounded-xl" }, [
+                                    React.createElement(CheckCircle2, { size: 16 }), "ACCOUNT VERBONDEN"
+                                ]) : 
+                                React.createElement('p', { className: "text-[10px] text-zinc-500 text-center uppercase leading-relaxed italic" }, 
+                                    "Klik op de link in de mail die je van Zonneplan krijgt om de live verbinding te activeren."
+                                )
+                        ])
+                    ])
+                :
+                    // Dashboard View
+                    React.createElement('div', { className: "space-y-8 animate-in fade-in" }, [
+                        React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-2 gap-8" }, [
+                            // Card 1: P1 Verbruik
+                            React.createElement('div', { className: "glass p-10 rounded-[3rem] relative overflow-hidden group" }, [
+                                React.createElement(Zap, { className: "absolute -right-6 -top-6 text-blue-600/10", size: 160 }),
+                                React.createElement('p', { className: "text-zinc-500 text-[10px] font-black uppercase tracking-[0.3em] mb-4" }, "Actueel Verbruik"),
+                                React.createElement('div', { className: "text-7xl font-black italic tracking-tighter flex items-baseline gap-2" }, [
+                                    liveData.p1, React.createElement('span', { className: "text-xl text-zinc-700 not-italic font-bold" }, "W")
+                                ]),
+                                React.createElement('div', { className: "mt-8 flex items-center gap-2" }, [
+                                    React.createElement('div', { className: `w-2 h-2 rounded-full ${liveData.isLive ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-800'}` }),
+                                    React.createElement('span', { className: "text-[9px] font-black text-zinc-500 uppercase tracking-widest" }, 
+                                        liveData.isLive ? `Live Update: ${liveData.lastUpdate}` : "Geen verbinding"
+                                    )
+                                ])
+                            ]),
+                            // Card 2: Status
+                            React.createElement('div', { className: "glass p-10 rounded-[3rem] flex flex-col justify-center border-l-4 border-blue-600" }, [
+                                React.createElement('div', { className: "flex items-center gap-4" }, [
+                                    React.createElement('div', { className: "p-4 bg-blue-600/10 rounded-2xl text-blue-500" }, React.createElement(Home, { size: 32 })),
+                                    React.createElement('div', null, [
+                                        React.createElement('p', { className: "text-[10px] font-black text-zinc-500 uppercase tracking-widest" }, "Systeem Status"),
+                                        React.createElement('h3', { className: "text-2xl font-black italic uppercase" }, liveData.isLive ? "Online" : "Offline")
+                                    ])
+                                ])
+                            ])
+                        ]),
+                        // Placeholder voor Solar
+                        React.createElement('div', { className: "glass p-12 rounded-[4rem] text-center" }, [
+                            React.createElement(Sun, { className: "mx-auto mb-4 text-zinc-800", size: 48 }),
+                            React.createElement('p', { className: "text-[10px] font-black text-zinc-700 uppercase tracking-[0.5em]" }, "Zonneplan Solar Module: Wacht op Koppeling")
+                        ])
+                    ])
+            ]);
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(App));
+    </script>
+</body>
+</html>
