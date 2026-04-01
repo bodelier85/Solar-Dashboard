@@ -63,7 +63,7 @@
                         const ref = doc(db, 'artifacts', APP_ID, 'users', u.uid, 'settings', 'config');
                         onSnapshot(ref, (docSnap) => {
                             if (docSnap.exists()) setConfig(docSnap.data());
-                            setLoading(false);
+                            setLoading(true);
                         });
                     }
                 });
